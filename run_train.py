@@ -9,7 +9,7 @@ from chess_utils import matrix_to_board
 import torch.nn.functional as F
 import torch.nn as nn
 from chess_models import *
-
+import time
 
 class ChessDataset(Dataset):
     def __init__(self, filename):
@@ -36,6 +36,16 @@ class ChessDataset(Dataset):
         brd_state3d = torch.zeros(15, 8, 8, dtype=torch.float32)
         brd_state3d.scatter_(0, n, 1.0)
         brd_state3d = brd_state3d[[0,1,2,3,4,5,6,8,9,10,11,12,13,14],:,:]
+        if  self.states_df.iloc[idx].turn %2:   #white turn 
+            brd_state3d[-1,7,0] = self.states_df.iloc[idx].white_castling[0]*1
+            brd_state3d[-1,7,7] = self.states_df.iloc[idx].white_castling[1]*1
+            brd_state3d[0,0,0] = self.states_df.iloc[idx].black_castling[0]*1
+            brd_state3d[0,0,7] = self.states_df.iloc[idx].black_castling[1]*1
+        else:
+            brd_state3d[-1,7,0] = self.states_df.iloc[idx].black_castling[0]*1
+            brd_state3d[-1,7,7] = self.states_df.iloc[idx].black_castling[1]*1
+            brd_state3d[0,0,0] = self.states_df.iloc[idx].white_castling[0]*1
+            brd_state3d[0,0,7] = self.states_df.iloc[idx].white_castling[1]*1            
         steps = self.states_df.iloc[idx].turns-self.states_df.iloc[idx].turn 
         result = torch.tensor((winner, steps), dtype=torch.float32)
         return brd_state3d, result
@@ -90,6 +100,7 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
 
     mloss = []
     for epoch in range(epochs):
+        starttime = time.perf_counter()
         if epoch == epochs//2:
             optimizer.param_groups[0]['lr'] /= 10
             print (f'updating lr to {optimizer.param_groups[0]['lr']}')
@@ -127,7 +138,9 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
             acc_sum += acc[0]
             acc_sum_sum += acc[1]
             p += 1
-        print(f'\n{epoch}.       mLoss:{loss_sum/p:.4f} | mAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%} | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100), f' | DumpedBatch:{(1-p/P):.2%}')
+
+        print(f'  epoch running time: {(time.perf_counter()-starttime)/60:.1f}m')
+        print(f'{epoch}.       mLoss:{loss_sum/p:.4f} | mAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%} | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100), f' | DumpedBatch:{(1-p/P):.2%}')
         mloss.append(loss_sum/p)
 
 
@@ -150,82 +163,77 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
                 acc_sum_sum += acc[1]
                 p += 1
         print(f'TEST: {epoch}. mLoss:{loss_sum/p:.4f} | \033[1mmAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%}\033[0m | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100))
-
+    print(' ')
     return model
+
+
+class MyChessNet_trnsfrm2_do(nn.Module):
+    def __init__(self, d_model=64, nhead=8, num_layers=4, do_f=1 ):
+        super().__init__()
+
+        self.embed = nn.Linear(14, d_model)
+
+        # 2D positional embedding: 8x8 = 64 tokens
+        self.pos_embed = nn.Parameter(torch.randn(64, d_model))
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dropout=0.1 * do_f,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers
+        )
+
+        self.cls = nn.Linear(d_model, 3)
+
+    def forward(self, x):
+        # x: (B, 14, 8, 8)
+        B = x.size(0)
+
+        x = x.permute(0, 2, 3, 1)   # (B, 8, 8, 14)
+        x = x.reshape(B, 64, 14)    # (B, 64, 14)
+
+        x = self.embed(x)           # (B, 64, d_model)
+        x = x + self.pos_embed      # add positional info
+
+        x = self.encoder(x)         # (B, 64, d_model)
+        x = x.mean(dim=1)           # global average pooling
+
+        return self.cls(x)          # (B, 3) logits		
+
+
 
 ############################################################################################################
 def main():
+    print(f'Runnig script: {__file__}')
 
-
-    ds_select = 'fish40'    #'kaggle', 'fish', 'fish40'
+    ds_select = 'fish40'    #'large' , 'kaggle', 'fish', 'fish40'
+    print(f'Dataset: {ds_select}')
 
     if ds_select=='kaggle':
-        ftrain_ds = ChessDataset("fish_train_states_ds.pkl")
-        ftest_ds = ChessDataset("fish_test_states_ds.pkl")
+        print('loading kaggle')
+        train_ds = ChessDataset("ds/train_states_ds.pkl")
+        test_ds = ChessDataset("ds/test_states_ds.pkl")
     elif ds_select == 'fish':
-        train_ds = ChessDataset("fish_train_states_ds.pkl")
-        test_ds = ChessDataset("fish_test_states_ds.pkl")
+        print('loading fish')
+        train_ds = ChessDataset("ds/fish_train_states_ds.pkl")
+        test_ds = ChessDataset("ds/fish_test_states_ds.pkl")
     elif ds_select == 'fish40':
-        train_ds = ChessDataset("fish40_train_states_ds.pkl")
-        test_ds = ChessDataset("fish40_test_states_ds.pkl")
-        
+        print('loading fish40')
+        train_ds = ChessDataset("ds/fish40_train_states_ds.pkl")
+        test_ds = ChessDataset("ds/fish40_test_states_ds.pkl")
+    elif ds_select == 'large':
+        print('loading fish40_large')
+        train_ds = ChessDataset("ds/fish40_large_train_states_ds.pkl")
+        test_ds = ChessDataset("ds/fish40_large_test_states_ds.pkl")        
     DS = train_ds, test_ds
 
 ###################################################################################################
-    # model = MyChessNet_hist()
-    # epochs = 4
-    # lr = 1e-3
-    # optim = 'adam'
-    # weight_decay =1e-3
-    # run_model(_datasets=DS, 
-    #     _model=model, 
-    #     _epochs=epochs, 
-    #     _lr=lr, 
-    #     _optim=optim, 
-    #     _weight_decay=weight_decay
-    #     )
-###################################################################################################
-    # model = HeavyTransformerClassifier()
-    # epochs = 6
-    # lr = 1e-4
-    # optim = 'adamW'
-    # weight_decay =1e-2
-    # run_model(_datasets=DS, 
-    #     _model=model, 
-    #     _epochs=epochs, 
-    #     _lr=lr, 
-    #     _optim=optim, 
-    #     _weight_decay=weight_decay
-    #     )
-###################################################################################################
-    # model = HeavyTransformerClassifier_sdo()
-    # epochs = 6
-    # lr = 1e-4
-    # optim = 'adamW'
-    # weight_decay =1e-2
-    # run_model(_datasets=DS, 
-    #     _model=model, 
-    #     _epochs=epochs, 
-    #     _lr=lr, 
-    #     _optim=optim, 
-    #     _weight_decay=weight_decay
-    #     )        
-###################################################################################################
-    # model = HeavyTransformerClassifier_sdo(do_factor=2)
-    # epochs = 6
-    # lr = 1e-4
-    # optim = 'adamW'
-    # weight_decay =1e-2
-    # run_model(_datasets=DS, 
-    #     _model=model, 
-    #     _epochs=epochs, 
-    #     _lr=lr, 
-    #     _optim=optim, 
-    #     _weight_decay=weight_decay
-    #     )
-###################################################################################################
-    model = HeavyTransformerClassifier()
-    epochs = 20
+    model = MyChessNet_trnsfrm2_do(d_model=64, nhead=8, num_layers=4, do_f=1)
+    epochs = 10 
     lr = 1e-3
     optim = 'adamW'
     weight_decay =1e-3
@@ -237,22 +245,9 @@ def main():
         _weight_decay=weight_decay
         )
 ###################################################################################################
-    model = MyChessNet_trnsfrm2()
-    epochs = 6
+    model = MyChessNet_hist()
+    epochs = 10
     lr = 1e-3
-    optim = 'adamW'
-    weight_decay =1e-3
-    run_model(_datasets=DS, 
-        _model=model, 
-        _epochs=epochs, 
-        _lr=lr, 
-        _optim=optim, 
-        _weight_decay=weight_decay
-        )
-###################################################################################################
-    model = MyChessNet()
-    epochs = 6
-    lr = 1e-2
     optim = 'adam'
     weight_decay =1e-3
     run_model(_datasets=DS, 
@@ -262,8 +257,10 @@ def main():
         _optim=optim, 
         _weight_decay=weight_decay
         )
-
+###################################################################################################
+ 
         
 if __name__ == "__main__":
     main()
-    
+
+
