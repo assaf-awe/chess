@@ -214,8 +214,8 @@ def main():
 
     if ds_select=='kaggle':
         print('loading kaggle')
-        ftrain_ds = ChessDataset("ds/fish_train_states_ds.pkl")
-        ftest_ds = ChessDataset("ds/fish_test_states_ds.pkl")
+        train_ds = ChessDataset("ds/train_states_ds.pkl")
+        test_ds = ChessDataset("ds/test_states_ds.pkl")
     elif ds_select == 'fish':
         print('loading fish')
         train_ds = ChessDataset("ds/fish_train_states_ds.pkl")

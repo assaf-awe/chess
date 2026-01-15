@@ -13,7 +13,7 @@ import torch.nn as nn
 
 class MyChessNet(nn.Module):
     def __init__(self):
-        super(MyChessNet, self).__init__()
+        super().__init__()
         
         do = 0.0
 
@@ -80,7 +80,7 @@ class MyChessNet(nn.Module):
 		
 class MyChessNet_hist(nn.Module):
     def __init__(self):
-        super(MyChessNet_hist, self).__init__()
+        super().__init__()
                 
         self.net = nn.Sequential(
             nn.Linear(14, 14),
@@ -105,7 +105,7 @@ class MyChessNet_hist(nn.Module):
 
 class MyChessNet_simple(nn.Module):
     def __init__(self, sharpness=10.0):
-        super(MyChessNet_simple, self).__init__()
+        super().__init__()
         self.vars = nn.Parameter(torch.tensor([0.0, 1.0]))  # v0, v1
         self.k = sharpness
         tmpvec = torch.tensor([0.,0,-9, -5, -3, -3, -1, 1, 3, 3, 5, 9, 0 , 0]).T
@@ -337,4 +337,86 @@ class HeavyTransformerClassifier_sdo(nn.Module):
         x = self.pre_head_dropout(x)
 
         return self.head(x)  # (B, 3) logits 
-    
+
+
+class MyChessNet_trnsfrm2_do(nn.Module):
+    def __init__(self, d_model=64, nhead=8, num_layers=4, do_f=1 ):
+        super().__init__()
+
+        dropout = 0.1 * do_f
+        ph_dropout = 0.2 * do_f
+        self.embed = nn.Linear(14, d_model)
+
+        # 2D positional embedding: 8x8 = 64 tokens
+        self.pos_embed = nn.Parameter(torch.randn(64, d_model))
+        self.embed_dropout = nn.Dropout(p=dropout)
+        self.pre_head_dropout = nn.Dropout(p=ph_dropout)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers
+        )
+
+        self.cls = nn.Linear(d_model, 3)
+
+    def forward(self, x):
+        # x: (B, 14, 8, 8)
+        B = x.size(0)
+
+        x = x.permute(0, 2, 3, 1)   # (B, 8, 8, 14)
+        x = x.reshape(B, 64, 14)    # (B, 64, 14)
+
+        x = self.embed(x)           # (B, 64, d_model)
+        x = self.embed_dropout(x)
+        x = x + self.pos_embed      # add positional info
+
+        x = self.encoder(x)         # (B, 64, d_model)
+        x = x.mean(dim=1)           # global average pooling
+        x = self.pre_head_dropout(x)
+
+        return self.cls(x)          # (B, 3) logits		
+
+
+# class MyChessNet_trnsfrm2_do(nn.Module):
+#     def __init__(self, d_model=64, nhead=8, num_layers=4, do_f=1 ):
+#         super().__init__()
+
+#         self.embed = nn.Linear(14, d_model)
+
+#         # 2D positional embedding: 8x8 = 64 tokens
+#         self.pos_embed = nn.Parameter(torch.randn(64, d_model))
+
+#         encoder_layer = nn.TransformerEncoderLayer(
+#             d_model=d_model,
+#             nhead=nhead,
+#             dropout=0.1 * do_f,
+#             batch_first=True
+#         )
+#         self.encoder = nn.TransformerEncoder(
+#             encoder_layer,
+#             num_layers=num_layers
+#         )
+
+#         self.cls = nn.Linear(d_model, 3)
+
+#     def forward(self, x):
+#         # x: (B, 14, 8, 8)
+#         B = x.size(0)
+
+#         x = x.permute(0, 2, 3, 1)   # (B, 8, 8, 14)
+#         x = x.reshape(B, 64, 14)    # (B, 64, 14)
+
+#         x = self.embed(x)           # (B, 64, d_model)
+#         x = x + self.pos_embed      # add positional info
+
+#         x = self.encoder(x)         # (B, 64, d_model)
+#         x = x.mean(dim=1)           # global average pooling
+
+#         return self.cls(x)          # (B, 3) logits		
+
