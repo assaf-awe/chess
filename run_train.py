@@ -55,9 +55,13 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=_weight_decay)
     
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=(1/2)**(1/25))
-
     train_ds, test_ds = _datasets
+
+    scheduler_gamma = (1/2)**(1/50)
+    scheduler_step_size = 1000
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
+    final_lr = lr * scheduler_gamma**(len(train_ds)/scheduler_step_size/_batch_size*epochs)
+    print(f'learning rate range {lr:.8f} -> {final_lr:.8f}')
     
     train_dataloader = DataLoader(train_ds, batch_size=_batch_size, num_workers=2, shuffle=True)
     test_dataloader = DataLoader(test_ds, batch_size=_batch_size, num_workers=8, shuffle=False)
@@ -65,7 +69,7 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
     mloss = []
     for epoch in range(epochs):
         starttime = time.perf_counter()
-        print(optimizer.param_groups[0]['lr'])
+        print(f"Current LearningRate: {optimizer.param_groups[0]['lr']:.8f}")
 
         model.train()
         p = 0
@@ -152,7 +156,7 @@ def main():
     ret = ret['ret']
 
     for m in ret:   
-        print(f"Model will be save to: {m['save_filename']}")
+        print(f"Model will be saved to: {m['save_filename']}")
         print(f"running on {m['dataset']} dataset")
         DS = get_dataset(m['dataset'])
         run_model(
@@ -163,7 +167,7 @@ def main():
             _optim=m['optim'], 
             _weight_decay=m['weight_decay']
             )
-        torch.save(model.state_dict(), m['save_filename'])
+        torch.save(m['model'].state_dict(), m['save_filename'])
 
         
 if __name__ == "__main__":
