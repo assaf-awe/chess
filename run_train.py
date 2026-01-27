@@ -63,7 +63,7 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
     final_lr = lr * scheduler_gamma**(len(train_ds)/scheduler_step_size/_batch_size*epochs)
     print(f'learning rate range {lr:.8f} -> {final_lr:.8f}')
     
-    train_dataloader = DataLoader(train_ds, batch_size=_batch_size, num_workers=2, shuffle=True)
+    train_dataloader = DataLoader(train_ds, batch_size=_batch_size, num_workers=0, shuffle=True)
     test_dataloader = DataLoader(test_ds, batch_size=_batch_size, num_workers=8, shuffle=False)
 
     mloss = []
@@ -98,7 +98,7 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
             optimizer.zero_grad()  
             loss.backward()  
             optimizer.step()  
-            scheduler.step()
+            # scheduler.step()
 
             loss_sum += np.array(loss.item())
             acc = accuracy(output, targets[:,0], vec3)
@@ -133,6 +133,99 @@ def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_siz
     print(' ')
     return model
 
+def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_size=256, _weight_decay = 1e-3, _savename='models/mod'):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f'tr_ds_size={len(_datasets[0])}, model={_model.__class__.__name__}, {_epochs=}, {_lr=}, {_optim=}, {_batch_size=}, {_weight_decay=}, Using device: {device}')
+    lr = _lr
+    epochs = _epochs
+
+    model = _model.to(device)
+    if _optim == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=_weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=_weight_decay)
+    
+    train_ds, test_ds = _datasets
+
+    scheduler_gamma = 0.99
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=scheduler_gamma)
+    
+    test_dataloader = DataLoader(test_ds, batch_size=_batch_size, num_workers=2, shuffle=False)
+
+    mloss = []
+    for epoch in range(epochs):
+        train_dataloader = DataLoader(train_ds[epoch%len(train_ds)], batch_size=_batch_size, num_workers=0, shuffle=True)
+        print('train dataset length:' , len(train_ds[epoch%len(train_ds)]))
+        starttime = time.perf_counter()
+        print(f"Current LearningRate: {optimizer.param_groups[0]['lr']:.8f}")
+
+        model.train()
+        p = 0
+        P = 0 
+        acc_sum = 0
+        acc_sum_sum = 0
+        loss_sum=np.array(0.)
+        for features, targets in train_dataloader:
+            P += 1
+            if P%1000 == 0:
+                print('#', end="",flush=True)
+            features = features.to(device)
+            targets = targets.to(device)
+
+            vec3 = targets[:,0]+1 
+
+            weighted_loss = True
+
+            if weighted_loss:
+                if  len(vec3.unique()) < 3 :
+                    # print(f'found states: {vec3.unique()}. Dropping batch')
+                    continue        
+
+            output = model(features)
+            if weighted_loss:     # Normlized loss
+                loss = criterion(output, torch.round(targets[:,0]).long(),vec3.to(device))
+            else:   # Non-normlized loss
+                loss = criterion(output, torch.round(targets[:,0]).long())
+
+            optimizer.zero_grad()  
+            loss.backward()  
+            optimizer.step()  
+
+            loss_sum += np.array(loss.item())
+            acc = accuracy(output, targets[:,0], vec3)
+            acc_sum += acc[0]
+            acc_sum_sum += acc[1]
+            p += 1
+
+        scheduler.step()
+        print(f'  epoch running time: {(time.perf_counter()-starttime)/60:.1f}m')
+        print(f'{epoch}.       mLoss:{loss_sum/p:.4f} | mAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%} | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100), f' | DumpedBatch:{(1-p/P):.2%}')
+        # mloss.append(loss_sum/p)
+
+        torch.save(model.state_dict(),_savename + '_'  + str(epoch) + '.pth')
+
+
+        model.eval()
+        p = 0
+        acc_sum = 0
+        acc_sum_sum = 0
+        loss_sum=np.array(0.)
+        with torch.no_grad():
+            for features, targets in test_dataloader:
+                features = features.to(device)
+                targets = targets.to(device)
+                output = model(features)
+                vec3 = targets[:,0]+1
+                loss = criterion(output, torch.round(targets[:,0]).long())
+
+                loss_sum += np.array(loss.item())
+                acc = accuracy(output, targets[:,0], vec3)
+                acc_sum += acc[0]
+                acc_sum_sum += acc[1]
+                p += 1
+        print(f'TEST: {epoch}. mLoss:{loss_sum/p:.4f} | \033[1mmAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%}\033[0m | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100))
+    print(' ')
+    return model
 
 
 ############################################################################################################
@@ -159,15 +252,16 @@ def main():
         print(f"Model will be saved to: {m['save_filename']}")
         print(f"running on {m['dataset']} dataset")
         DS = get_dataset(m['dataset'])
-        run_model(
+        run_model_mds(
             _datasets=DS, 
             _model=m['model'], 
             _epochs=m['epochs'], 
             _lr=m['lr'], 
             _optim=m['optim'], 
-            _weight_decay=m['weight_decay']
+            _weight_decay=m['weight_decay'],
+            _savename=  m['save_filename']
             )
-        torch.save(m['model'].state_dict(), m['save_filename'])
+        
 
         
 if __name__ == "__main__":
