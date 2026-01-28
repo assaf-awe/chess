@@ -1,0 +1,4 @@
+rawdata/lichess*.zst
+models/*pth
+logs/*log
+ds/*pkl
