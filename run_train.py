@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt 
 import pickle
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from chess_utils import matrix_to_board
 import torch.nn.functional as F
 import torch.nn as nn
@@ -42,97 +42,6 @@ def accuracy(output, targets, vec=None):
         ret = (torch.round(torch.argmax(output,axis=1)-1) == targets)*1. @ VEC
         return ret.cpu().numpy(), VEC.sum(axis=0).cpu().numpy()
 
-
-def run_model(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_size=256, _weight_decay = 1e-3):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f'tr_ds_size={len(_datasets[0])}, model={_model.__class__.__name__}, {_epochs=}, {_lr=}, {_optim=}, {_batch_size=}, {_weight_decay=}, Using device: {device}')
-    lr = _lr
-    epochs = _epochs
-
-    model = _model.to(device)
-    if _optim == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=_weight_decay)
-    else:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=_weight_decay)
-    
-    train_ds, test_ds = _datasets
-
-    scheduler_gamma = (1/2)**(1/50)
-    scheduler_step_size = 1000
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
-    final_lr = lr * scheduler_gamma**(len(train_ds)/scheduler_step_size/_batch_size*epochs)
-    print(f'learning rate range {lr:.8f} -> {final_lr:.8f}')
-    
-    train_dataloader = DataLoader(train_ds, batch_size=_batch_size, num_workers=0, shuffle=True)
-    test_dataloader = DataLoader(test_ds, batch_size=_batch_size, num_workers=8, shuffle=False)
-
-    mloss = []
-    for epoch in range(epochs):
-        starttime = time.perf_counter()
-        print(f"Current LearningRate: {optimizer.param_groups[0]['lr']:.8f}")
-
-        model.train()
-        p = 0
-        P = 0 
-        acc_sum = 0
-        acc_sum_sum = 0
-        loss_sum=np.array(0.)
-        for features, targets in train_dataloader:
-            P += 1
-            if P%1000 == 0:
-                print('#', end="",flush=True)
-            features = features.to(device)
-            targets = targets.to(device)
-
-            vec3 = targets[:,0]+1 
-            if  len(vec3.unique()) < 3 :
-                # print(f'found states: {vec3.unique()}. Dropping batch')
-                continue        
-
-            output = model(features)
-            # Normlized loss
-            loss = criterion(output, torch.round(targets[:,0]).long(),vec3.to(device))
-            # Non-normlized loss
-            # loss = criterion(output, torch.round(targets[:,0]).long())
-
-            optimizer.zero_grad()  
-            loss.backward()  
-            optimizer.step()  
-            # scheduler.step()
-
-            loss_sum += np.array(loss.item())
-            acc = accuracy(output, targets[:,0], vec3)
-            acc_sum += acc[0]
-            acc_sum_sum += acc[1]
-            p += 1
-
-        print(f'  epoch running time: {(time.perf_counter()-starttime)/60:.1f}m')
-        print(f'{epoch}.       mLoss:{loss_sum/p:.4f} | mAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%} | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100), f' | DumpedBatch:{(1-p/P):.2%}')
-        # mloss.append(loss_sum/p)
-
-
-        model.eval()
-        p = 0
-        acc_sum = 0
-        acc_sum_sum = 0
-        loss_sum=np.array(0.)
-        with torch.no_grad():
-            for features, targets in test_dataloader:
-                features = features.to(device)
-                targets = targets.to(device)
-                output = model(features)
-                vec3 = targets[:,0]+1
-                loss = criterion(output, torch.round(targets[:,0]).long())
-
-                loss_sum += np.array(loss.item())
-                acc = accuracy(output, targets[:,0], vec3)
-                acc_sum += acc[0]
-                acc_sum_sum += acc[1]
-                p += 1
-        print(f'TEST: {epoch}. mLoss:{loss_sum/p:.4f} | \033[1mmAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%}\033[0m | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100))
-    print(' ')
-    return model
-
 def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch_size=256, _weight_decay = 1e-3, _savename='models/mod'):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f'tr_ds_size={len(_datasets[0])}, model={_model.__class__.__name__}, {_epochs=}, {_lr=}, {_optim=}, {_batch_size=}, {_weight_decay=}, Using device: {device}')
@@ -145,12 +54,12 @@ def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=_weight_decay)
     
-    train_ds, test_ds = _datasets
+    train_ds, val_ds = _datasets
 
     scheduler_gamma = 0.99
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=scheduler_gamma)
     
-    test_dataloader = DataLoader(test_ds, batch_size=_batch_size, num_workers=2, shuffle=False)
+    val_dataloader = DataLoader(val_ds, batch_size=_batch_size, num_workers=2, shuffle=False)
 
     mloss = []
     for epoch in range(epochs):
@@ -199,7 +108,7 @@ def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch
 
         scheduler.step()
         print(f'  epoch running time: {(time.perf_counter()-starttime)/60:.1f}m')
-        print(f'{epoch}.       mLoss:{loss_sum/p:.4f} | mAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%} | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100), f' | DumpedBatch:{(1-p/P):.2%}')
+        print(f'{epoch}.      mLoss:{loss_sum/p:.4f} | mAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%} | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100), f' | DumpedBatch:{(1-p/P):.2%}')
         # mloss.append(loss_sum/p)
 
         torch.save(model.state_dict(),_savename + '_'  + str(epoch) + '.pth')
@@ -211,7 +120,7 @@ def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch
         acc_sum_sum = 0
         loss_sum=np.array(0.)
         with torch.no_grad():
-            for features, targets in test_dataloader:
+            for features, targets in val_dataloader:
                 features = features.to(device)
                 targets = targets.to(device)
                 output = model(features)
@@ -223,7 +132,7 @@ def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch
                 acc_sum += acc[0]
                 acc_sum_sum += acc[1]
                 p += 1
-        print(f'TEST: {epoch}. mLoss:{loss_sum/p:.4f} | \033[1mmAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%}\033[0m | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100))
+        print(f'VAL: {epoch}. mLoss:{loss_sum/p:.4f} | \033[1mmAcc:{acc_sum.sum()/acc_sum_sum.sum():.2%} | wAcc:{(acc_sum/acc_sum_sum).mean():.2%}\033[0m | Acc[W/D/B]:',np.char.mod('%.2f%%', acc_sum/acc_sum_sum * 100))
     print(' ')
     return model
 
@@ -250,8 +159,12 @@ def main():
 
     for m in ret:   
         print(f"Model will be saved to: {m['save_filename']}")
-        print(f"running on {m['dataset']} dataset")
-        DS = get_dataset(m['dataset'])
+        print(f"running on train={m['train_path']} val={m['val_path']}")
+        train_ds, val_ds = get_dataset(m['train_path'], m['val_path'])
+        if isinstance(val_ds, list):
+            val_ds = ConcatDataset(val_ds) if len(val_ds) > 1 else val_ds[0]
+        DS = train_ds, val_ds
+
         run_model_mds(
             _datasets=DS, 
             _model=m['model'], 
