@@ -11,28 +11,28 @@ mkdir rawdata/test
 mkdir rawdata/val
 
 ### download one or more game files from Lichess for training
-wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-01.pgn.zst -P rawdata/train/
-wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-02.pgn.zst -P rawdata/train/
-wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-03.pgn.zst -P rawdata/train/
-wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-04.pgn.zst -P rawdata/train/
+wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-01.pgn.zst -P rawdata/train/  
+wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-02.pgn.zst -P rawdata/train/  
+wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-03.pgn.zst -P rawdata/train/  
+wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-04.pgn.zst -P rawdata/train/  
 
 ### download one or more game files from Lichess for validation
-wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-10.pgn.zst -P rawdata/val/
+wget https://database.lichess.org/standard/lichess_db_standard_rated_2016-10.pgn.zst -P rawdata/val/  
 
 ### download one or more game files from Lichess for testing
-wget https://database.lichess.org/standard/lichess_db_standard_rated_2023-11.pgn.zst -P rawdata/test/
+wget https://database.lichess.org/standard/lichess_db_standard_rated_2023-11.pgn.zst -P rawdata/test/  
 
 ### create dataset folders:
-mkdir ds/train
-mkdir ds/test
-mkdir ds/val
+mkdir ds/train  
+mkdir ds/test  
+mkdir ds/val  
 
 ### prepare datasets train/val/test
-python datasets.py rawdata/train ds/train/train --max-games 500000 --states-per-game 5 --include-missing-eval-states --start-skip 20 --state-sample-method uniform
-python datasets.py rawdata/train ds/val/val --max-games 10000 --states-per-game 5 --include-missing-eval-states --start-skip 20 --state-sample-method uniform
-python datasets.py rawdata/train ds/test/test --max-games 50000 --states-per-game 5 --state-sample-method uniform
-
+python datasets.py rawdata/train ds/train/train --max-games 500000 --states-per-game 5 --include-missing-eval-states --start-skip 20 --state-sample-method uniform  
+python datasets.py rawdata/train ds/val/val --max-games 10000 --states-per-game 5 --include-missing-eval-states --start-skip 20 --state-sample-method uniform  
+python datasets.py rawdata/train ds/test/test --max-games 50000 --states-per-game 5 --state-sample-method uniform  
+  
 ### run training:
-python -u run_train.py settings.py | tee -a logs/train_$(date +%F_%H-%M).log
+python -u run_train.py settings.py | tee -a logs/train_$(date +%F_%H-%M).log   
 
 
