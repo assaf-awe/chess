@@ -86,8 +86,8 @@ def run_model_mds(_datasets, _model, _epochs=10, _lr=1e-3, _optim='adam', _batch
             weighted_loss = True
 
             if weighted_loss:
+                # This is safety check to avoid dividing by 0. In usual cases drop rate is less than 0.01%
                 if  len(vec3.unique()) < 3 :
-                    # print(f'found states: {vec3.unique()}. Dropping batch')
                     continue        
 
             output = model(features)
